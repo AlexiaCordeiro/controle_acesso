@@ -5,6 +5,7 @@ import time
 from collections import defaultdict, deque
 
 class FileServer:
+# Classe responsável por controlar o acesso concorrente aos arquivos usando sockets TCP.
     def __init__(self, host='localhost', port=5000):
         self.host = host
         self.port = port
@@ -32,6 +33,7 @@ class FileServer:
                 f.write(f"[{time.ctime()}] {message}\n")
 
     def handle_client(self, client_socket, client_address):
+    # Lida com cada cliente conectado, processando suas requisições enquanto durar a conexão.
         try:
             self._log(f"New connection from {client_address}")
             while True:
@@ -109,6 +111,7 @@ class FileServer:
         return None
 
     def start(self):
+    # Inicializa o servidor e escuta por conexões simultâneas, criando uma thread para cada novo cliente.
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen(5)
         self._log(f"Server listening on {self.host}:{self.port}")
