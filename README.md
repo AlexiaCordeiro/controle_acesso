@@ -48,7 +48,7 @@ Este projeto implementa um sistema simplificado de controle de acesso a arquivos
 1.  **Clone o Repositório (se ainda não o fez):**
 
     ```bash
-    git clone <url-do-seu-repositorio>
+    git clone git@github.com:AlexiaCordeiro/controle_acesso.git
     cd <diretorio-do-seu-repositorio>
     ```
 
