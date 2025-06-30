@@ -29,7 +29,6 @@ class FileClient:
             raise
 
     def send_request(self, request_payload):
-        """Helper to send JSON requests and receive JSON responses."""
         request_json = json.dumps(request_payload)
         print(f"[CLIENT {self.client_id}] Sending request: {request_json}")
         try:
@@ -126,7 +125,7 @@ class FileClient:
             login_resp = self.request_login()
             if login_resp.get("status") != "success":
                 print(f"[CLIENT {self.client_id}_ERROR] Failed to log in. Aborting simulation. Response: {login_resp}")
-                return # Stop simulation if login fails
+                return
 
             for i in range(max_operations):
                 action = random.choice(["read", "write"])
@@ -146,7 +145,7 @@ class FileClient:
                 else:
                     print(f"[CLIENT {self.client_id}] Access {action} to {file_name} was {response.get('status')}. Message: {response.get('message')}")
 
-                time.sleep(random.uniform(0.5, 2.0)) # Pause between operations
+                time.sleep(random.uniform(0.5, 2.0))
 
             logout_resp = self.request_logout()
             print(f"[CLIENT {self.client_id}] Logout attempt response: {logout_resp}")
@@ -168,18 +167,15 @@ class FileClient:
 
 if __name__ == "__main__":
     print("[MAIN] Client script started.")
-    # Configuration for the simulation
-    FILES = ["fileA", "fileB", "fileC"] # Match server's files
+    FILES = ["fileA", "fileB", "fileC"]
 
-    # Get client_id from environment variable (Docker container hostname)
     container_client_id = os.getenv('HOSTNAME', 'default_client')
 
-    # Assign usernames and passwords based on client_id or use a rotating pool
     username_map = {
         'file-client-1': 'user1',
         'file-client-2': 'user2',
         'file-client-3': 'user3',
-        'default_client': 'user1' # Fallback for local testing or unassigned clients
+        'default_client': 'user1'
     }
     password_map = {
         'file-client-1': 'password1',
@@ -198,7 +194,7 @@ if __name__ == "__main__":
         file_list=FILES,
         username=client_user,
         password=client_pass,
-        server_host='file-server' # Use the service name defined in docker-compose.yml
+        server_host='file-server'
     )
 
     client.simulate_work(max_operations=5)

@@ -74,7 +74,7 @@ class FileServer:
         self.files = {
             "fileA": {"owner": "user1", "permissions": {"read": ["admin", "user", "guest"], "write": ["admin", "user"]}},
             "fileB": {"owner": "user2", "permissions": {"read": ["admin", "user"], "write": ["admin"]}},
-            "fileC": {"owner": "user1", "permissions": {"read": ["admin", "user"], "write": ["admin", "user"]}} # Modified permissions for fileC
+            "fileC": {"owner": "user1", "permissions": {"read": ["admin", "user"], "write": ["admin", "user"]}}
         }
         self.logged_in_users = {}
         self.log_file = "server_log.txt"
@@ -91,13 +91,13 @@ class FileServer:
         with self.log_lock:
             with open(self.log_file, "a") as f:
                 f.write(f"[{time.ctime()}] Server started at {self.host}:{self.port}\n")
-        print(f"[{time.ctime()}] Server started at {self.host}:{self.port}") # Also print to stdout
+        print(f"[{time.ctime()}] Server started at {self.host}:{self.port}")
 
     def log_event(self, event):
         with self.log_lock:
             with open(self.log_file, "a") as f:
                 f.write(f"[{time.ctime()}] {event}\n")
-        print(f"[{time.ctime()}] {event}") # Also print to stdout
+        print(f"[{time.ctime()}] {event}")
 
     def authenticate_user(self, username, password, addr):
         self.log_event(f"Attempting to authenticate user '{username}' from {addr}")
@@ -259,7 +259,7 @@ class FileServer:
                     if current_user not in self.logged_in_users or \
                        self.logged_in_users[current_user]["session_id"] != session_id:
                         
-                        if current_user in self.logged_in_users: # Only if it exists but is different
+                        if current_user in self.logged_in_users:
                             del self.logged_in_users[current_user]
                             self.log_event(f"User {current_user} session {session_id[-4:]} invalidated due to new login elsewhere or server restart. Cleaning up.")
 
