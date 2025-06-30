@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: file-server
+    ports:
+      - "5000:5000"
+    networks:
+      - file_access_network
+    # CHANGE THIS LINE for the server
+    command: bash -c "sleep 5 && python -u server.py"
+
+  client1:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: file-client-1
+    depends_on:
+      - server
+    environment:
+      SERVER_HOST: server
+    networks:
+      - file_access_network
+    command: bash -c "sleep 5 && python -u client.py"
+  client2:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: file-client-2
+    depends_on:
+      - server
+    environment:
+      SERVER_HOST: server
+    networks:
+      - file_access_network
+    command: bash -c "sleep 5 && python client.py"
+
+  client3:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: file-client-3
+    depends_on:
+      - server
+    environment:
+      SERVER_HOST: server
+    networks:
+      - file_access_network
+    command: bash -c "sleep 5 && python client.py"
+
+networks:
+  file_access_network:
+    driver: bridge

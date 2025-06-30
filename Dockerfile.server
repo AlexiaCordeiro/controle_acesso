@@ -1,0 +1,10 @@
+# Dockerfile.server
+FROM python:3.9-slim-buster
+
+WORKDIR /app
+
+COPY server.py .
+
+EXPOSE 5000
+
+CMD ["python", "server.py"]
