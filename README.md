@@ -1,5 +1,3 @@
-Aqui está o README recriado em português:
-
 # Sistema de Controle de Acesso a Arquivos
 
 Este projeto implementa um sistema simplificado de controle de acesso a arquivos usando uma arquitetura cliente-servidor. O servidor gerencia recursos de arquivo, autenticação de usuários e permissões de acesso, incluindo bloqueios de leitura/escrita com um mecanismo de fila. Vários clientes podem se conectar ao servidor, autenticar e solicitar acesso a arquivos.
