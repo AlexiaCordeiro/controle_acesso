@@ -1,56 +1,52 @@
 version: '3.8'
 
 services:
-  server:
+  file-server: # <--- This is the service name the clients must connect to
     build:
       context: .
-      dockerfile: Dockerfile.server
-    container_name: file-server
+      dockerfile: Dockerfile.server # Assuming you have a Dockerfile for the server
     ports:
-      - "5000:5000"
+      - "5000:5000" # Map host port 5000 to container port 5000
     networks:
-      - file_access_network
-    # CHANGE THIS LINE for the server
-    command: bash -c "sleep 5 && python -u server.py"
+      - file_system_network
 
-  client1:
+  file-client-1: # Example client 1
     build:
       context: .
-      dockerfile: Dockerfile.client
-    container_name: file-client-1
-    depends_on:
-      - server
+      dockerfile: Dockerfile.client # Assuming you have a Dockerfile for the clients
     environment:
-      SERVER_HOST: server
-    networks:
-      - file_access_network
-    command: bash -c "sleep 5 && python -u client.py"
-  client2:
-    build:
-      context: .
-      dockerfile: Dockerfile.client
-    container_name: file-client-2
+      # This hostname will be picked up by os.getenv('HOSTNAME') in client.py
+      - HOSTNAME=file-client-1
+      - SERVER_HOST=file-server # Explicitly set for clarity, though 'file-server' is the default DNS name
     depends_on:
-      - server
-    environment:
-      SERVER_HOST: server
+      - file-server
     networks:
-      - file_access_network
-    command: bash -c "sleep 5 && python client.py"
+      - file_system_network
 
-  client3:
+  file-client-2: # Example client 2
     build:
       context: .
       dockerfile: Dockerfile.client
-    container_name: file-client-3
-    depends_on:
-      - server
     environment:
-      SERVER_HOST: server
+      - HOSTNAME=file-client-2
+      - SERVER_HOST=file-server
+    depends_on:
+      - file-server
     networks:
-      - file_access_network
-    command: bash -c "sleep 5 && python client.py"
+      - file_system_network
+
+  file-client-3: # Example client 3
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    environment:
+      - HOSTNAME=file-client-3
+      - SERVER_HOST=file-server
+    depends_on:
+      - file-server
+    networks:
+      - file_system_network
 
 networks:
-  file_access_network:
+  file_system_network:
     driver: bridge

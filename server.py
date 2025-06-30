@@ -2,27 +2,54 @@ import socket
 import threading
 import json
 import time
-import random # Needed for session_id generation
+import random
 from collections import defaultdict, deque
+
+class FileResource:
+    def __init__(self):
+        self.condition = threading.Condition()
+        self.readers = 0
+        self.writer_active = False
+        self.pending_requests = deque()
+
+    def acquire_read(self, username, session_id):
+        with self.condition:
+            while self.writer_active or (self.pending_requests and self.pending_requests[0] != (username, 'read', session_id)):
+                self.condition.wait()
+            self.readers += 1
+            return True
+
+    def release_read(self):
+        with self.condition:
+            self.readers -= 1
+            if self.readers == 0:
+                self.condition.notify_all()
+
+    def acquire_write(self, username, session_id):
+        with self.condition:
+            while self.readers > 0 or self.writer_active or (self.pending_requests and self.pending_requests[0] != (username, 'write', session_id)):
+                self.condition.wait()
+            self.writer_active = True
+            return True
+
+    def release_write(self):
+        with self.condition:
+            self.writer_active = False
+            self.condition.notify_all()
 
 class FileServer:
     def __init__(self, host='0.0.0.0', port=5000):
-        print("FileServer __init__ called.")
         self.host = host
         self.port = port
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        print("Socket created and options set.")
 
         try:
             self.server_socket.bind((self.host, self.port))
-            print(f"Socket bound to {self.host}:{self.port}")
         except socket.error as e:
-            print(f"Error binding socket: {e}")
-            raise # Re-raise to ensure script stops and shows error
+            raise
 
-        self.server_socket.listen(5) # Allow up to 5 queued connections
-        print(f"Server listening on {self.host}:{self.port}")
+        self.server_socket.listen(5)
 
         self.users = {
             "user1": {"password": "password1", "roles": ["admin"]},
@@ -34,67 +61,54 @@ class FileServer:
             "fileB": {"owner": "user2", "permissions": {"read": ["admin", "user"], "write": ["admin"]}},
             "fileC": {"owner": "user1", "permissions": {"read": ["admin"], "write": ["admin"]}}
         }
-        self.logged_in_users = {} # {username: {session_id: ..., role: ..., addr: ...}}
+        self.logged_in_users = {}
         self.log_file = "server_log.txt"
-        self.log_lock = threading.Lock() # For safe concurrent writing to log file
+        self.log_lock = threading.Lock()
 
-        # Initialize access history for each file
+        self.file_resources = {file_name: FileResource() for file_name in self.files}
+
         self.file_access_history = {file_name: deque(maxlen=10) for file_name in self.files}
-        # { 'fileA': deque([ (timestamp, user, type, status), ... ]) }
 
         self.init_log()
-        print("FileServer initialization complete.")
-
 
     def init_log(self):
-        print("init_log called.")
         with self.log_lock:
             with open(self.log_file, "a") as f:
                 f.write(f"[{time.ctime()}] Server started at {self.host}:{self.port}\n")
-        print("Server started message logged.")
 
     def log_event(self, event):
-        # print(f"Logging event: {event}") # Keep this if you want verbose internal logging
         with self.log_lock:
             with open(self.log_file, "a") as f:
                 f.write(f"[{time.ctime()}] {event}\n")
 
     def authenticate_user(self, username, password, addr):
-        print(f"Server: Attempting to authenticate user '{username}' from {addr}")
         if username in self.users and self.users[username]["password"] == password:
             if username in self.logged_in_users:
-                # User already logged in, maybe from a different session?
                 self.log_event(f"User {username} attempted login from {addr} but already logged in.")
                 return {"status": "error", "message": "User already logged in."}
 
             session_id = f"{username}_{int(time.time())}_{random.randint(1000, 9999)}"
             self.logged_in_users[username] = {
                 "session_id": session_id,
-                "role": self.users[username]["roles"][0], # Assuming first role is primary
+                "role": self.users[username]["roles"][0],
                 "addr": addr
             }
             self.log_event(f"User {username} successfully logged in from {addr} with session {session_id}.")
-            print(f"Server: User {username} logged in. Session: {session_id}")
             return {"status": "success", "message": "Login successful.", "session_id": session_id}
         else:
             self.log_event(f"Failed login attempt for '{username}' from {addr}.")
-            print(f"Server: Failed login for '{username}'.")
             return {"status": "denied", "message": "Invalid username or password."}
 
     def logout_user(self, username, session_id):
-        print(f"Server: Attempting to log out user '{username}' with session '{session_id}'")
         if username in self.logged_in_users and self.logged_in_users[username]["session_id"] == session_id:
             del self.logged_in_users[username]
             self.log_event(f"User {username} successfully logged out with session {session_id}.")
-            print(f"Server: User {username} logged out.")
             return {"status": "success", "message": "Logout successful."}
         else:
             self.log_event(f"Failed logout attempt for '{username}' with invalid session {session_id}.")
-            print(f"Server: Failed logout for '{username}' - invalid session.")
             return {"status": "error", "message": "User not logged in or invalid session."}
 
-    def check_file_access(self, username, user_role, filename, access_type):
-        print(f"Server: Checking {access_type} access for '{username}' ({user_role}) on '{filename}'")
+    def check_file_access_permissions(self, username, user_role, filename, access_type):
         if filename not in self.files:
             return {"status": "denied", "message": f"File '{filename}' not found."}
 
@@ -102,62 +116,102 @@ class FileServer:
         required_permissions = file_info["permissions"].get(access_type, [])
 
         if user_role in required_permissions:
-            print(f"Server: Access {access_type} granted to '{username}' for '{filename}'.")
-            return {"status": "granted", "message": f"{access_type.capitalize()} access granted for {filename}."}
+            return {"status": "granted", "message": f"{access_type.capitalize()} permissions granted for {filename}."}
         else:
-            print(f"Server: Access {access_type} denied to '{username}' for '{filename}'. Role '{user_role}' not in required permissions: {required_permissions}.")
-            return {"status": "denied", "message": f"{access_type.capitalize()} access denied for {filename}. Insufficient permissions."}
+            return {"status": "denied", "message": f"{access_type.capitalize()} permissions denied for {filename}. Insufficient permissions."}
 
     def record_file_access(self, filename, username, access_type, status):
-        print(f"Server: Recording access: {filename} by {username} for {access_type} status {status}")
         if filename in self.file_access_history:
             self.file_access_history[filename].append((time.time(), username, access_type, status))
             self.log_event(f"File access recorded: {filename} by {username} ({access_type}, {status}).")
         else:
             self.log_event(f"Attempted to record access for unknown file: {filename}")
 
+    def request_file_access(self, username, user_role, filename, access_type, session_id):
+        perm_check_result = self.check_file_access_permissions(username, user_role, filename, access_type)
+        if perm_check_result["status"] == "denied":
+            self.record_file_access(filename, username, access_type, "denied_permission")
+            return perm_check_result
+
+        file_resource = self.file_resources.get(filename)
+        if not file_resource:
+            self.log_event(f"Attempted to access non-existent file resource: {filename}")
+            self.record_file_access(filename, username, access_type, "denied_not_found")
+            return {"status": "error", "message": f"File '{filename}' resource not found on server."}
+
+        with file_resource.condition:
+            file_resource.pending_requests.append((username, access_type, session_id))
+            self.log_event(f"Request for {filename} by {username} ({access_type}) added to queue.")
+
+        acquired = False
+        try:
+            if access_type == "read":
+                acquired = file_resource.acquire_read(username, session_id)
+            elif access_type == "write":
+                acquired = file_resource.acquire_write(username, session_id)
+            
+            if acquired:
+                with file_resource.condition:
+                    if file_resource.pending_requests and file_resource.pending_requests[0] == (username, access_type, session_id):
+                        file_resource.pending_requests.popleft()
+                
+                self.record_file_access(filename, username, access_type, "granted")
+                self.log_event(f"Access {access_type} granted to {username} for {filename} (from queue).")
+                return {"status": "granted", "message": f"{access_type.capitalize()} access granted for {filename}."}
+            else:
+                self.record_file_access(filename, username, access_type, "denied_lock_fail")
+                return {"status": "denied", "message": f"{access_type.capitalize()} access denied due to lock contention for {filename}."}
+        except Exception as e:
+            self.log_event(f"Error acquiring lock for {filename} by {username}: {e}")
+            self.record_file_access(filename, username, access_type, "error_lock_acquire")
+            return {"status": "error", "message": f"Server error acquiring lock: {e}"}
+
+    def release_file_access(self, username, filename, access_type, session_id):
+        file_resource = self.file_resources.get(filename)
+        if not file_resource:
+            self.log_event(f"Attempted to release non-existent file resource: {filename}")
+            return {"status": "error", "message": f"File '{filename}' resource not found on server."}
+
+        try:
+            if access_type == "read":
+                file_resource.release_read()
+            elif access_type == "write":
+                file_resource.release_write()
+            
+            self.record_file_access(filename, username, access_type, "released")
+            self.log_event(f"Access {access_type} released by {username} for {filename}.")
+            return {"status": "success", "message": f"Access to {filename} released by {username}."}
+        except Exception as e:
+            self.log_event(f"Error releasing lock for {filename} by {username}: {e}")
+            self.record_file_access(filename, username, access_type, "error_lock_release")
+            return {"status": "error", "message": f"Server error releasing lock: {e}"}
+
     def handle_client(self, conn, addr):
         current_user = None
         session_id = None
-        print(f"Server: Handling client {addr}")
+        user_role = None
         self.log_event(f"New connection from {addr}")
 
-<<<<<<< HEAD
-=======
-    def _init_log(self):
-        with open(self.log_file, 'w') as f:
-            f.write("=== SERVER LOG ===\n")
-            f.write(f"Server started at {time.ctime()}\n\n")
-
-    def _log(self, message):
-        with self.log_lock:
-            with open(self.log_file, 'a') as f:
-                f.write(f"[{time.ctime()}] {message}\n")
-
-    def handle_client(self, client_socket, client_address):
-    # Lida com cada cliente conectado, processando suas requisições enquanto durar a conexão.
->>>>>>> 4b56a33baca85dd5bbc1a41cd7b555909ce199bb
         try:
             while True:
                 data = conn.recv(1024).decode('utf-8')
                 if not data:
-                    print(f"Server: Client {addr} disconnected gracefully.")
                     self.log_event(f"Client {addr} disconnected gracefully.")
-                    if current_user and session_id:
-                        # Clean up logged-in user session if disconnected gracefully
-                        self.logged_in_users.pop(current_user, None)
+                    if current_user and session_id and \
+                       self.logged_in_users.get(current_user, {}).get("session_id") == session_id:
+                        del self.logged_in_users[current_user]
                         self.log_event(f"User {current_user} session {session_id} removed on disconnect.")
                     break
 
-                request = {} # Initialize request to an empty dict
-                response_data = {"status": "error", "message": "Invalid request format."} # Default error response
+                request = {}
+                response_data = {"status": "error", "message": "Invalid request format."}
 
                 try:
                     request = json.loads(data)
-                    print(f"Server: Received request from {addr}: {request}")
                     self.log_event(f"Received request from {addr}: {request}")
 
                     action = request.get("action")
+                    request_session_id = request.get("session_id")
 
                     if action == "login":
                         username = request.get("username")
@@ -166,181 +220,92 @@ class FileServer:
                         if response_data.get("status") == "success":
                             current_user = username
                             session_id = response_data.get("session_id")
-                            # Update logged_in_users with comprehensive session info, including addr
-                            if username in self.users: # Ensure user exists
-                                self.logged_in_users[username] = {
-                                    "session_id": session_id,
-                                    "role": self.users[username]["roles"][0],
-                                    "addr": addr # Store client address
-                                }
-                                self.log_event(f"User {username} logged in with session {session_id} from {addr}")
+                            user_role = self.logged_in_users[current_user]["role"]
+                        conn.sendall(json.dumps(response_data).encode('utf-8'))
+                        self.log_event(f"Sent response to {addr}: {response_data}")
+                        continue
 
-                    elif action == "request_access":
-                        # Validate session before processing access request
-                        if not current_user or self.logged_in_users.get(current_user, {}).get("session_id") != session_id:
-                            response_data = {"status": "denied", "message": "Not logged in or invalid session for access request."}
-                        else:
-                            filename = request.get("filename")
-                            access_type = request.get("access_type")
-                            
-                            user_role = None
-                            # Retrieve role from currently active logged_in_users
-                            if current_user in self.logged_in_users and self.logged_in_users[current_user]["session_id"] == session_id:
-                                user_role = self.logged_in_users[current_user]["role"]
-                            
-                            if user_role:
-                                response_data = self.check_file_access(current_user, user_role, filename, access_type)
-                                self.log_event(f"Access request for {filename} by {current_user} ({user_role}) for {access_type} access: {response_data.get('status')}")
-                                
-                                if response_data.get('status') == 'granted':
-                                    self.record_file_access(filename, current_user, access_type, "granted")
-                                else:
-                                    self.record_file_access(filename, current_user, access_type, "denied")
-                            else:
-                                response_data = {"status": "denied", "message": "Invalid user role or session."}
+                    if not current_user or not session_id or not user_role:
+                        response_data = {"status": "denied", "message": "Authentication required. Please log in first."}
+                        conn.sendall(json.dumps(response_data).encode('utf-8'))
+                        self.log_event(f"Denied unauthenticated request from {addr} for action '{action}'. Not logged in to handler.")
+                        continue
+
+                    if request_session_id != session_id:
+                         response_data = {"status": "denied", "message": "Invalid session ID provided in request. Please log in again."}
+                         conn.sendall(json.dumps(response_data).encode('utf-8'))
+                         self.log_event(f"Denied request from {addr} for action '{action}'. Mismatch session ID. Expected: {session_id}, Received: {request_session_id}.")
+                         continue
+
+                    if current_user not in self.logged_in_users or \
+                       self.logged_in_users[current_user]["session_id"] != session_id:
+                        
+                        if current_user in self.logged_in_users:
+                             del self.logged_in_users[current_user]
+
+                        current_user = None
+                        session_id = None
+                        user_role = None
+                        response_data = {"status": "denied", "message": "Session invalidated (e.g., user logged in elsewhere). Please log in again."}
+                        conn.sendall(json.dumps(response_data).encode('utf-8'))
+                        self.log_event(f"Denied request from {addr} for action '{action}'. Global session for {current_user} is invalid/expired. Expected {session_id}, Current Global: {self.logged_in_users.get(current_user, {}).get('session_id')}.")
+                        continue
+
+                    if action == "request_access":
+                        filename = request.get("filename")
+                        access_type = request.get("access_type")
+                        response_data = self.request_file_access(current_user, user_role, filename, access_type, session_id)
 
                     elif action == "release_access":
-                        if not current_user or self.logged_in_users.get(current_user, {}).get("session_id") != session_id:
-                            response_data = {"status": "error", "message": "Not logged in or invalid session for release request."}
-                        else:
-                            filename = request.get("filename")
-                            response_data = {"status": "success", "message": f"Access to {filename} released by {current_user}."}
-                            self.log_event(f"Release request for {filename} by {current_user}.")
+                        filename = request.get("filename")
+                        access_type = request.get("access_type")
+                        response_data = self.release_file_access(current_user, filename, access_type, session_id)
 
                     elif action == "logout":
-                        if current_user:
-                            response_data = self.logout_user(current_user, session_id)
-                            # Only clear current_user/session_id if logout was successful
-                            if response_data.get("status") == "success":
-                                current_user = None
-                                session_id = None
-                        else:
-                            response_data = {"status": "error", "message": "No user logged in for this session to logout."}
-
+                        response_data = self.logout_user(current_user, session_id)
+                        if response_data.get("status") == "success":
+                            current_user = None
+                            session_id = None
+                            user_role = None
                     else:
                         response_data = {"status": "error", "message": "Unknown action."}
 
                 except json.JSONDecodeError as e:
                     response_data = {"status": "error", "message": f"JSON decoding error: {e}"}
-                    print(f"Server: JSON decode error from {addr}: {e}, Raw data: '{data}'")
                     self.log_event(f"JSON decode error from {addr}: {e}, Raw data: '{data}'")
                 except Exception as e:
                     response_data = {"status": "error", "message": f"Server internal error: {e}"}
-                    print(f"Server: Error processing request from {addr}: {e}")
                     self.log_event(f"Error processing request from {addr}: {e}")
 
-                # --- ALWAYS SEND A RESPONSE ---
                 response_json = json.dumps(response_data)
                 conn.sendall(response_json.encode('utf-8'))
-                print(f"Server: Sent response to {addr}: {response_json}")
                 self.log_event(f"Sent response to {addr}: {response_json}")
 
         except socket.error as e:
-            print(f"Server: Socket error with client {addr}: {e}")
             self.log_event(f"Socket error with client {addr}: {e}")
         except Exception as e:
-            print(f"Server: Unexpected error in handle_client for {addr}: {e}")
             self.log_event(f"Unexpected error in handle_client for {addr}: {e}")
         finally:
-            print(f"Server: Connection with {addr} closed.")
             self.log_event(f"Connection with {addr} closed.")
             conn.close()
-            # Clean up user session if it was active and the handler is exiting
-            if current_user and session_id:
-                # Check if this session is still active and remove it
-                if self.logged_in_users.get(current_user, {}).get("session_id") == session_id:
-                    self.logged_in_users.pop(current_user, None)
-                    self.log_event(f"User {current_user} session {session_id} removed on handler termination.")
+            if current_user and session_id and \
+               self.logged_in_users.get(current_user, {}).get("session_id") == session_id:
+                del self.logged_in_users[current_user]
+                self.log_event(f"User {current_user} session {session_id} removed on handler termination.")
 
-<<<<<<< HEAD
     def run(self):
-        print("Server run() method started.")
         while True:
             try:
                 conn, addr = self.server_socket.accept()
-                print(f"Server: Accepted connection from {addr}")
                 client_handler = threading.Thread(target=self.handle_client, args=(conn, addr))
                 client_handler.start()
             except Exception as e:
-                print(f"Server: Error accepting client connection: {e}")
                 self.log_event(f"Error accepting client connection: {e}")
-                break # Exit loop on critical error
-=======
-    def process_request(self, request, client_address):
-        action = request.get("action")
-        filename = request.get("filename")
-        client_id = request.get("client_id")
-        
-        if action == "read":
-            return self.handle_read(filename, client_id)
-        elif action == "write":
-            return self.handle_write(filename, client_id)
-        elif action == "release":
-            return self.handle_release(filename, client_id)
-        else:
-            return {"status": "error", "message": "Invalid action"}
+                break
 
-    def handle_read(self, filename, client_id):
-        with self.file_locks[filename]:
-            if filename not in self.file_queues or not self.file_queues[filename]:
-                self.client_files[client_id].add(filename)
-                return {"status": "granted", "message": f"Read access granted for {filename}"}
-            
-            self.file_queues[filename].append(("read", client_id))
-            return {"status": "queued", "message": f"Read request queued for {filename}"}
-
-    def handle_write(self, filename, client_id):
-        with self.file_locks[filename]:
-            if filename not in self.file_queues or not self.file_queues[filename]:
-                if not self.client_files:  # Nenhum cliente acessando o arquivo
-                    self.client_files[client_id].add(filename)
-                    return {"status": "granted", "message": f"Write access granted for {filename}"}
-                
-            self.file_queues[filename].append(("write", client_id))
-            return {"status": "queued", "message": f"Write request queued for {filename}"}
-
-    def handle_release(self, filename, client_id):
-        with self.file_locks[filename]:
-            if filename in self.client_files[client_id]:
-                self.client_files[client_id].remove(filename)
-                if not self.client_files[client_id]:
-                    del self.client_files[client_id]
-                
-                self.process_queue(filename)
-                return {"status": "released", "message": f"Released access to {filename}"}
-            return {"status": "error", "message": f"No access to release for {filename}"}
-
-    def process_queue(self, filename):
-        if filename in self.file_queues and self.file_queues[filename]:
-            next_action, next_client = self.file_queues[filename].popleft()
-            self.client_files[next_client].add(filename)
-            return {"status": "granted", "client_id": next_client, "action": next_action}
-        return None
-
-    def start(self):
-    # Inicializa o servidor e escuta por conexões simultâneas, criando uma thread para cada novo cliente.
-        self.server_socket.bind((self.host, self.port))
-        self.server_socket.listen(5)
-        self._log(f"Server listening on {self.host}:{self.port}")
-        
-        try:
-            while True:
-                client_socket, client_address = self.server_socket.accept()
-                client_thread = threading.Thread(
-                    target=self.handle_client,
-                    args=(client_socket, client_address)
-                )
-                client_thread.start()
-        finally:
-            self.server_socket.close()
->>>>>>> 4b56a33baca85dd5bbc1a41cd7b555909ce199bb
-
-# Main execution block
 if __name__ == "__main__":
-    print("Main execution block entered.")
     try:
         server = FileServer()
         server.run()
     except Exception as e:
-        print(f"An unexpected error occurred in main execution: {e}")
-
+        pass
