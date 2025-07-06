@@ -1,29 +1,29 @@
-version: '3.8'
+version: '3.8'  # Versão mínima que suporta recursos usados
 
 services:
-  file-server: # <--- This is the service name the clients must connect to
+  file-server:
     build:
-      context: .
-      dockerfile: Dockerfile.server # Assuming you have a Dockerfile for the server
+      context: .  # Build usando Dockerfile no diretório atual
+      dockerfile: Dockerfile.server  # Dockerfile específico para o servidor
     ports:
-      - "5000:5000" # Map host port 5000 to container port 5000
+      - "5000:5000"  # Expõe a porta do servidor para o host (não necessário para comunicação entre containers)
     networks:
-      - file_system_network
+      - file_system_network  # Conecta à rede compartilhada
 
-  file-client-1: # Example client 1
+  # Clientes com configuração idêntica exceto pelo HOSTNAME
+  file-client-1:
     build:
       context: .
-      dockerfile: Dockerfile.client # Assuming you have a Dockerfile for the clients
+      dockerfile: Dockerfile.client
     environment:
-      # This hostname will be picked up by os.getenv('HOSTNAME') in client.py
-      - HOSTNAME=file-client-1
-      - SERVER_HOST=file-server # Explicitly set for clarity, though 'file-server' is the default DNS name
+      - HOSTNAME=file-client-1  # Usado pelo client.py para selecionar credenciais
+      - SERVER_HOST=file-server  # DNS interno do Docker para o serviço do servidor
     depends_on:
-      - file-server
+      - file-server  # Garante ordem de inicialização (não saúde do serviço)
     networks:
-      - file_system_network
+      - file_system_network  # Mesma rede do servidor
 
-  file-client-2: # Example client 2
+  file-client-2:
     build:
       context: .
       dockerfile: Dockerfile.client
@@ -35,7 +35,7 @@ services:
     networks:
       - file_system_network
 
-  file-client-3: # Example client 3
+  file-client-3:
     build:
       context: .
       dockerfile: Dockerfile.client
@@ -49,4 +49,4 @@ services:
 
 networks:
   file_system_network:
-    driver: bridge
+    driver: bridge  # Rede isolada para comunicação entre serviços

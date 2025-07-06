@@ -1,8 +1,12 @@
-# Dockerfile.client
+# Imagem base otimizada para Python (slim reduz tamanho)
 FROM python:3.9-slim-buster
 
+# Diretório de trabalho no container
 WORKDIR /app
 
+# Copia apenas o arquivo necessário (boa prática para cache de camadas)
 COPY client.py .
 
+# Comando padrão executado ao iniciar o container
+# Nota: Não usa ENTRYPOINT para permitir sobrescrita fácil
 CMD ["python", "client.py"]

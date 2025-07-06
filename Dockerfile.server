@@ -1,10 +1,16 @@
-# Dockerfile.server
+# Imagem base Python 3.9 versão slim (reduzida) no Debian Buster
 FROM python:3.9-slim-buster
 
+# Define o diretório de trabalho dentro do container
 WORKDIR /app
 
+# Copia apenas o arquivo do servidor (otimiza cache de camadas do Docker)
 COPY server.py .
 
+# Documenta a porta utilizada (NÃO publica a porta)
+# Observação: A publicação real da porta é feita no docker-compose.yml
 EXPOSE 5000
 
+# Comando padrão executado ao iniciar o container
+# Usa formato exec (melhor tratamento de sinais que o formato shell)
 CMD ["python", "server.py"]
